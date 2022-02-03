@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang='en'>
+
+<head>
+  <style>
+    body {
+      margin: 0
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id='gl'></canvas>
+</body>
+
+<script src="https://cdn.jsdelivr.net/npm/tweakpane@3.0.7/dist/tweakpane.min.js"></script>
+
+<!-- Vertex Shader -->
+<script id='vertex' type='x-shader/x-vertex'>
+    attribute vec2 a_position;
+
+    void main() {
+      gl_Position = vec4( a_position, 0., 1. );
+    }
+  </script>
+
+<!-- fragment shader -->
+<script id='fragment' type='x-shader/x-fragment'>
+  #ifdef GL_ES
+  precision mediump float;
+  #endif
+  
+  uniform float time;
+  uniform vec2 resolution;
+  uniform sampler2D uSampler;
+
+  float random (vec2 st) {
+    return fract(sin(dot(st.xy, vec2(12.9898,78.233)))* 43758.5453123);
+  }
+  
+  void main() {
+    vec2 pos = gl_FragCoord.xy/ resolution;
+    vec4 color = texture2D( uSampler, pos);
+    gl_FragColor = color;
+  }
+  </script>
+
+<script id='feedback' type='x-shader/x-fragment'>
+    #ifdef GL_ES
+    precision mediump float;
+    #endif
+  
+    uniform float time;
+    uniform float feedbackAmount;
+    uniform float red;
+    uniform float green;
+    uniform float blue;
+    uniform vec2  resolution;
+    
+    uniform sampler2D videoTexture;
+    uniform sampler2D feedbackTexture;
+
+    float random (vec2 st) {
+      return fract(sin(dot(st.xy, vec2(12.9898,78.233)))* 43758.5453123);
+    }
+    
+  
+    void main() {
+      vec2 pos = gl_FragCoord.xy / resolution;
+      vec3 video = texture2D( videoTexture, pos ).rgb;
+      vec3 prior = texture2D( feedbackTexture, pos ).rgb;
+      
+      vec3 colors = prior * vec3(red, green, blue);
+      // our final output is a combination of the live video signal
+      // and our feedback
+      gl_FragColor = vec4( (colors * feedbackAmount), 1. );
+    }
+  </script>
+
+<script type='text/javascript'>
+  // "global" variables
+  let gl, uTime, red, green, blue, feedbackAmount
+
+  window.onload = function () {
+
+    // ------------------------ make Pane ----------------------------------
+    const PARAMS = {
+      red: 1,
+      green: 1,
+      blue: 1,
+      feedback: 0.5
+    };
+
+    const pane = new Tweakpane.Pane();
+
+    const redInput = pane.addInput(PARAMS, 'red', {
+      min: 0,
+      max: 1
+    });
+    redInput.on('change', function (ev) {
+      red = ev.value
+    })
+
+    const greenInput = pane.addInput(PARAMS, 'green', {
+      min: 0,
+      max: 1
+    });
+    greenInput.on('change', function (ev) {
+      green = ev.value
+    })
+
+    const blueInput = pane.addInput(PARAMS, 'blue', {
+      min: 0,
+      max: 1
+    });
+    blueInput.on('change', function (ev) {
+      blue = ev.value
+    })
+
+    const feedbackInput = pane.addInput(PARAMS, 'feedback', {
+      min: 0,
+      max: 1
+    });
+    feedbackInput.on('change', function (ev) {
+      feedbackAmount = ev.value
+    })
+
+    red = PARAMS['red']
+    green = PARAMS['green']
+    blue = PARAMS['blue']
+    feedbackAmount = PARAMS['feedback']
+
+
+    //------------------------- make canvas ---------------------------------
+    const canvas = document.getElementById('gl')
+    gl = canvas.getContext('webgl2')
+    canvas.width = window.innerWidth
+    canvas.height = window.innerHeight
+
+    // --------------------------get Video------------------------------
+    function getVideo() {
+      video = document.createElement('video')
+
+      navigator.mediaDevices.getUserMedia({
+        video: true
+      }).then(stream => {
+        video.srcObject = stream
+        video.play()
+        makeTexture(video)
+      })
+
+      return video
+    }
+
+
+    //--------------------------- make texture ------------------------------------
+    function makeTexture() {
+      texture = gl.createTexture()
+      gl.bindTexture(gl.TEXTURE_2D, texture)
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)    //flips bc shaders and canvas graphs differently
+
+      // how to map when texture element is more than one pixel
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      // how to map when texture element is less than one pixel
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+
+      // you must have these properties defined for the video texture to
+      // work correctly
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+
+      // let our render loop know when the texture is ready
+      textureLoaded = true
+    }
+
+
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)  // define drawing area of canvas. bottom corner, width / height
+    const buffer = gl.createBuffer()            // create a buffer object to store vertices    
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer)      // point buffer at graphic context's ARRAY_BUFFER
+
+    const triangles = new Float32Array([
+      -1, -1,
+      1, -1,
+      -1, 1,
+      -1, 1,
+      1, -1,
+      1, 1
+    ])
+
+    // initialize memory for buffer and populate it. Give
+    // open gl hint contents will not change dynamically.
+    gl.bufferData(gl.ARRAY_BUFFER, triangles, gl.STATIC_DRAW)
+
+    /* -------------- create vertex shader -------------------*/
+    let shaderScript = document.getElementById('vertex')
+    let shaderSource = shaderScript.text
+    const vertexShader = gl.createShader(gl.VERTEX_SHADER)
+    gl.shaderSource(vertexShader, shaderSource);
+    gl.compileShader(vertexShader)
+
+    /* ---------------------- create fragment shader-------------------------*/
+    shaderScript = document.getElementById('fragment')
+    shaderSource = shaderScript.text
+    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER)
+    gl.shaderSource(fragmentShader, shaderSource);
+    gl.compileShader(fragmentShader)
+
+    // create shader program
+    const program = gl.createProgram()
+    gl.attachShader(program, vertexShader)
+    gl.attachShader(program, fragmentShader)
+    gl.linkProgram(program)
+    gl.useProgram(program)
+
+    shaderScript = document.getElementById('feedback')
+    shaderSource = shaderScript.text
+    const feedbackFragmentShader = gl.createShader(gl.FRAGMENT_SHADER)
+    gl.shaderSource(feedbackFragmentShader, shaderSource)
+    gl.compileShader(feedbackFragmentShader)
+    console.log(gl.getShaderInfoLog(feedbackFragmentShader))
+
+    // create feedback shader program
+    feedbackProgram = gl.createProgram()
+    gl.attachShader(feedbackProgram, vertexShader)
+    gl.attachShader(feedbackProgram, feedbackFragmentShader)
+
+    gl.linkProgram(feedbackProgram)
+    gl.useProgram(feedbackProgram)
+
+    const uRes = gl.getUniformLocation(feedbackProgram, 'resolution')
+    gl.uniform2f(uRes, gl.drawingBufferWidth, gl.drawingBufferHeight)
+
+    uFeedback = gl.getUniformLocation(feedbackProgram, 'feedbackAmount')
+    gl.uniform1f(uFeedback, feedbackAmount)
+
+    uRed = gl.getUniformLocation(feedbackProgram, 'red')
+    gl.uniform1f(uRed, red)
+
+    uGreen = gl.getUniformLocation(feedbackProgram, 'green')
+    gl.uniform1f(uGreen, green)
+
+    uBlue = gl.getUniformLocation(feedbackProgram, 'blue')
+    gl.uniform1f(uBlue, blue)
+
+    uTime = gl.getUniformLocation(feedbackProgram, 'time')
+
+    // one texture for feedback, one for video. There will actually be
+    // a third texture involved, but we'll only need to access two in our
+    // feedback shader in any given frame of video.
+    uFeedbackTexture = gl.getUniformLocation(feedbackProgram, 'feedbackTexture')
+    uVideoTexture = gl.getUniformLocation(feedbackProgram, 'videoTexture')
+
+    const position = gl.getAttribLocation(feedbackProgram, 'a_position')
+    gl.enableVertexAttribArray(feedbackProgram)
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
+
+
+    gl.enableVertexAttribArray(position)
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
+
+    getVideo()
+    render()
+  }
+
+  // keep track of time via incremental frame counter
+  let time = 0
+  render = function () {
+    // schedules render to be called the next time the video card requests 
+    // a frame of video
+    window.requestAnimationFrame(render)
+
+    // check to see if video is playing and the texture has been created
+    if (textureLoaded === true) {
+      // send texture data to GPU    
+      gl.texImage2D(
+        gl.TEXTURE_2D,    // target: you will always want gl.TEXTURE_2D
+        0,                // level of detail: 0 is the base
+        gl.RGBA, gl.RGBA, // color formats
+        gl.UNSIGNED_BYTE, // type: the type of texture data; 0-255
+        video             // pixel source: could also be video or image
+      )
+
+      // draw triangles using the array buffer from index 0 to 6 (6 is count)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+    }
+
+    gl.uniform1f(uFeedback, feedbackAmount)
+    gl.uniform1f(uRed, red)
+    gl.uniform1f(uGreen, green)
+    gl.uniform1f(uBlue, blue)
+    
+    time++
+    gl.uniform1f(uTime, time)
+
+  }
+</script>
+
+</html>
