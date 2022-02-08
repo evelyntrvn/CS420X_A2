@@ -55,7 +55,9 @@
     uniform float red;
     uniform float green;
     uniform float blue;
+    uniform float nAmount;
     uniform vec2  resolution;
+    
     
     uniform sampler2D videoTexture;
     uniform sampler2D feedbackTexture;
@@ -64,22 +66,39 @@
       return fract(sin(dot(st.xy, vec2(12.9898,78.233)))* 43758.5453123);
     }
     
+    float shine (in vec2 pos){
+      vec2 i = floor(pos);
+      vec2 f = fract(pos);
+
+      float a = random (i);
+      float b = random (i + vec2(1., 0.));
+      float c = random (i + vec2(0., 1.));
+      float d = random (i + vec2(1., 1.));
+
+      vec2 u = smoothstep(0.,1.,f);
+
+      return mix(a, b, u.x) + 
+              (c - a) * u.y * (1. - u.x) + 
+              (d - b) * u.x * u.y;
+    }
   
     void main() {
       vec2 pos = gl_FragCoord.xy / resolution;
       vec3 video = texture2D( videoTexture, pos ).rgb;
       vec3 prior = texture2D( feedbackTexture, pos ).rgb;
       
-      vec3 colors = prior * vec3(red, green, blue);
-      // our final output is a combination of the live video signal
-      // and our feedback
-      gl_FragColor = vec4( (colors * feedbackAmount), 1. );
+      float f = shine(vec2( pos * nAmount));
+
+      vec3 colors = prior * vec3(red, green, blue) - vec3(feedbackAmount*f*prior) ;
+      
+      vec4 result = vec4( prior*vec3(red, green, blue)*feedbackAmount, 1.) + vec4(vec3(f), 1.);
+      gl_FragColor = result;
     }
   </script>
 
 <script type='text/javascript'>
   // "global" variables
-  let gl, uTime, red, green, blue, feedbackAmount
+  let gl, uTime, red, green, blue, nAmount, feedbackAmount
 
   window.onload = function () {
 
@@ -88,6 +107,7 @@
       red: 1,
       green: 1,
       blue: 1,
+      shine: 6.0,
       feedback: 0.5
     };
 
@@ -117,6 +137,14 @@
       blue = ev.value
     })
 
+    const shineInput = pane.addInput(PARAMS, 'shine', {
+      min: 0,
+      max: 10
+    });
+    shineInput.on('change', function (ev) {
+      nAmount = ev.value
+    })
+
     const feedbackInput = pane.addInput(PARAMS, 'feedback', {
       min: 0,
       max: 1
@@ -128,6 +156,7 @@
     red = PARAMS['red']
     green = PARAMS['green']
     blue = PARAMS['blue']
+    nAmount = PARAMS['shine']
     feedbackAmount = PARAMS['feedback']
 
 
@@ -157,26 +186,21 @@
     function makeTexture() {
       texture = gl.createTexture()
       gl.bindTexture(gl.TEXTURE_2D, texture)
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)    //flips bc shaders and canvas graphs differently
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)                    //flips bc shaders and canvas graphs differently
 
-      // how to map when texture element is more than one pixel
+      // how to map when texture element is more/less than one pixel
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-      // how to map when texture element is less than one pixel
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 
-      // you must have these properties defined for the video texture to
-      // work correctly
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-
-      // let our render loop know when the texture is ready
-      textureLoaded = true
+      
+      textureLoaded = true                                            // let  render loop know when the texture is ready
     }
 
-
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)  // define drawing area of canvas. bottom corner, width / height
-    const buffer = gl.createBuffer()            // create a buffer object to store vertices    
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer)      // point buffer at graphic context's ARRAY_BUFFER
+    const buffer = gl.createBuffer()                                  // create a buffer object to store vertices    
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer)                            // point buffer at graphic context's ARRAY_BUFFER
 
     const triangles = new Float32Array([
       -1, -1,
@@ -187,11 +211,9 @@
       1, 1
     ])
 
-    // initialize memory for buffer and populate it. Give
-    // open gl hint contents will not change dynamically.
-    gl.bufferData(gl.ARRAY_BUFFER, triangles, gl.STATIC_DRAW)
+    gl.bufferData(gl.ARRAY_BUFFER, triangles, gl.STATIC_DRAW)     // initialize memory for buffer a
 
-    /* -------------- create vertex shader -------------------*/
+    /* ---------------------- create vertex shader --------------------------*/
     let shaderScript = document.getElementById('vertex')
     let shaderSource = shaderScript.text
     const vertexShader = gl.createShader(gl.VERTEX_SHADER)
@@ -205,7 +227,7 @@
     gl.shaderSource(fragmentShader, shaderSource);
     gl.compileShader(fragmentShader)
 
-    // create shader program
+     /* ---------------------- create shader program -------------------------*/
     const program = gl.createProgram()
     gl.attachShader(program, vertexShader)
     gl.attachShader(program, fragmentShader)
@@ -219,7 +241,7 @@
     gl.compileShader(feedbackFragmentShader)
     console.log(gl.getShaderInfoLog(feedbackFragmentShader))
 
-    // create feedback shader program
+     /* --------------- create feedback shader program ----------------------*/
     feedbackProgram = gl.createProgram()
     gl.attachShader(feedbackProgram, vertexShader)
     gl.attachShader(feedbackProgram, feedbackFragmentShader)
@@ -242,18 +264,17 @@
     uBlue = gl.getUniformLocation(feedbackProgram, 'blue')
     gl.uniform1f(uBlue, blue)
 
+    ushine = gl.getUniformLocation(feedbackProgram, 'nAmount')
+    gl.uniform1f(ushine, nAmount)
+
     uTime = gl.getUniformLocation(feedbackProgram, 'time')
 
-    // one texture for feedback, one for video. There will actually be
-    // a third texture involved, but we'll only need to access two in our
-    // feedback shader in any given frame of video.
     uFeedbackTexture = gl.getUniformLocation(feedbackProgram, 'feedbackTexture')
     uVideoTexture = gl.getUniformLocation(feedbackProgram, 'videoTexture')
 
     const position = gl.getAttribLocation(feedbackProgram, 'a_position')
     gl.enableVertexAttribArray(feedbackProgram)
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
-
 
     gl.enableVertexAttribArray(position)
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
@@ -262,32 +283,28 @@
     render()
   }
 
-  // keep track of time via incremental frame counter
   let time = 0
   render = function () {
-    // schedules render to be called the next time the video card requests 
-    // a frame of video
-    window.requestAnimationFrame(render)
+    window.requestAnimationFrame(render)           // schedules render to be called the next time
 
-    // check to see if video is playing and the texture has been created
-    if (textureLoaded === true) {
-      // send texture data to GPU    
-      gl.texImage2D(
-        gl.TEXTURE_2D,    // target: you will always want gl.TEXTURE_2D
-        0,                // level of detail: 0 is the base
-        gl.RGBA, gl.RGBA, // color formats
-        gl.UNSIGNED_BYTE, // type: the type of texture data; 0-255
-        video             // pixel source: could also be video or image
+   
+    if (textureLoaded === true) {                  // check to see if video is playing and the texture has been created  
+      gl.texImage2D(                               // send texture data to GPU  
+        gl.TEXTURE_2D,                             // target: you will always want gl.TEXTURE_2D
+        0,                                         // level of detail: 0 is the base
+        gl.RGBA, gl.RGBA,                          // color formats
+        gl.UNSIGNED_BYTE,                          // type: the type of texture data; 0-255
+        video                                      // pixel source: could also be video or image
       )
 
-      // draw triangles using the array buffer from index 0 to 6 (6 is count)
-      gl.drawArrays(gl.TRIANGLES, 0, 6)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)            // draw triangles using the array buffer
     }
 
-    gl.uniform1f(uFeedback, feedbackAmount)
+    gl.uniform1f(uFeedback, feedbackAmount)        // updates uniforms
     gl.uniform1f(uRed, red)
     gl.uniform1f(uGreen, green)
     gl.uniform1f(uBlue, blue)
+    gl.uniform1f(ushine, nAmount)
     
     time++
     gl.uniform1f(uTime, time)
