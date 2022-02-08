@@ -4,7 +4,7 @@
 <head>
   <style>
     body {
-      margin: 0
+      margin: auto
     }
   </style>
 </head>
@@ -163,8 +163,14 @@
     //------------------------- make canvas ---------------------------------
     const canvas = document.getElementById('gl')
     gl = canvas.getContext('webgl2')
-    canvas.width = window.innerWidth
-    canvas.height = window.innerHeight
+    if (window.innerHeight > ((window.innerWidth*3)/4)){
+      canvas.width = window.innerWidth
+      canvas.height = (canvas.width*3)/4
+    }else{
+      canvas.height = window.innerHeight
+      canvas.width = (canvas.height*4)/3
+    }
+    
 
     // --------------------------get Video------------------------------
     function getVideo() {
